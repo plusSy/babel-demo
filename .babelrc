@@ -1,0 +1,15 @@
+{
+  "presets": [
+    "my-awesome-preset"
+  ],
+  "plugins": [
+    "transform-runtime",
+    "transform-es2015-classes"
+  ],
+  "env": {
+    "development": {
+      "plugins": []
+    },
+    "production": []
+  }
+}
