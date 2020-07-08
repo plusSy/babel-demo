@@ -1,4 +1,5 @@
-# babel demo
+# babel user handbook
+> 如何安装／配置 Babel 及相关内容。
 
 ## 安装babel
 
@@ -615,6 +616,87 @@ $ npm install --save-dev eslint babel-eslint
 ```
 
 然后创建或使用项目现有的 `.eslintrc` 文件并设置 `parser` 为 `babel-eslint`。
+
+```js
+{
+    "parser": "babel-eslint",
+    "rules": {
+        ...
+    }
+}
+```
+
+现在添加一个 `lint` 任务到 `npm`的 `package.json` 脚本中:
+
+```json
+{
+    {
+      "name": "babel-demo",
+      "version": "1.0.0",
+      "description": "",
+      "main": "index.js",
+      "scripts": {
+        "dev": "",
+        "core": "babel-node ./babel-core.js",
+        "build": "babel src -d lib",
+        "lint": "eslint index.js",
+        "test": "echo \"Error: no test specified\" && exit 1"
+      },
+      "author": "",
+      "license": "ISC",
+      "devDependencies": {
+        "babel-cli": "^6.26.0",
+        "babel-core": "^6.26.3",
+        "babel-eslint": "^10.1.0",
+        "babel-plugin-transform-es2015-classes": "^6.24.1",
+        "babel-plugin-transform-runtime": "^6.23.0",
+        "babel-preset-es2015": "^6.24.1",
+        "babel-preset-my-awesome-preset": "file:packages/preset/babel-preset-my-awesome-preset",
+        "babel-register": "^6.26.0",
+        "babel-runtime": "^6.26.0",
+        "eslint": "^7.4.0"
+      },
+      "dependencies": {
+        "babel-polyfill": "^6.26.0"
+      }
+    }
+}
+```
+
+现在只需运行 `$ npm run lint` 就可以检测代码内容了.
+
+详细信息请咨询 [`babel-eslint`](https://github.com/babel/babel-eslint) 或者 [`eslint`](http://eslint.org/) 的文档。
+
+#### 代码风格
+
+> JSCS已经和ESLint 合并了,所以可以查看ESLint的代码风格
+
+JSCS是一个很受欢迎的工具,在语法检查的基础上更进一步检查代码自身的风格. Babel和JSCS项目核心维护者之一维护着JSCS的官方集成.
+
+更妙的是，JSCS 自己通过 `--esnext` 选项实现了这种集成，于是和 Babel 的集成就简化成了直接在命令行运行：
+
+```
+$ jscs . --esnext
+```
+
+或者在 `.jscsrc` 文件里添加 `esnext` 选项。
+
+```
+  {
+    "preset": "airbnb",
+    "esnext": true
+  }
+```
+
+详细信息请咨询 [`babel-jscs`](https://github.com/jscs-dev/babel-jscs) 或是 [`jscs`](http://jscs.info/) 的文档。
+
+
+
+## 参考链接
+
+[https://github.com/jamiebuilds/babel-handbook/blob/master/translations/zh-Hans/user-handbook.md](https://github.com/jamiebuilds/babel-handbook/blob/master/translations/zh-Hans/plugin-handbook.md)
+
+
 
 
 
