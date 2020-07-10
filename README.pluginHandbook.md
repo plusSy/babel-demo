@@ -127,7 +127,7 @@ interface Node {
 }
 ```
 
-字符串形式的`type` 字段表示节点的类型(如: `"FunctionDeclaratio"`,`"Identifier"`,或 `"BinaryExpression"`).每一种类型的节点定义了一些附加属性用来进一步描述该节点的类型.
+字符串形式的`type` 字段表示节点的类型(如: `"FunctionDeclaration"`,`"Identifier"`,或 `"BinaryExpression"`).每一种类型的节点定义了一些附加属性用来进一步描述该节点的类型.
 
 Babel 还为每个节点额外生成了一些属性,用于描述该节点在原始代码中的位置.
 
@@ -161,6 +161,763 @@ Babel 的三个主要处理步骤分别是: **解析（parse）**,**转换（tra
 **解析**步骤接收代码并输出AST.  这个步骤分为两个阶: [**词法分析（Lexical Analysis） **](https://en.wikipedia.org/wiki/Lexical_analysis)和 [**语法分析（Syntactic Analysis）**](https://en.wikipedia.org/wiki/Parsing).
 
 ##### 词法分析
+
+词法分析阶段把字符串形式的代码转换为 **令牌(tokens)** 流.
+
+你可以把令牌看做是一个扁平的语法片段数组,
+
+```js
+n * n;
+```
+
+```js
+[
+    { type: {...}, value: "n", start: 0, end: 1, loc: {...} }
+    { type: {...}, value: "*", start: 2, end: 3, loc: {...} }
+    { type: {...}, value: "n", start: 4, end: 5, loc: {...} }
+]
+```
+
+每一个`type` 都有一组属性来描述该令牌:
+
+```js
+{
+    type: {
+        label: "name",
+        keyword: undefined,
+        beforeExpr: false,
+        startsExpr: true,
+        rightAssociative: false,
+        isLoop: false,
+        isAssign: false,
+        prefix: false,
+        postfix: false,
+        binop: null,
+        updateContext: null
+    },
+    ...
+}
+```
+
+和 AST 节点 一样他们也有 `start`  `end`  `loc`  属性.
+
+##### 语法分析
+
+语法分析阶段会把一个令牌转换成AST的形式. 这个阶段会使用令牌中的信息把他们转换成一个AST的表述结构,这样更易于后续的操作.
+
+#### 转换
+
+[转换](https://en.wikipedia.org/wiki/Program_transformation) 步骤接收AST并对其进行遍历,在此过程中对节点进行添加,更新以及移除等操作. 这是Babel 或是其他编译器中最复杂的过程 同时也是插件将要介入工作的部分,这将是本手册的主要内容,因此让我们慢慢来看.
+
+#### 生成
+
+[代码生成 ](https://en.wikipedia.org/wiki/Code_generation_(compiler)) 步骤把最终（经过一系列转换之后）的 AST 转换成字符串形式的代码，同时还会创建 [源码映射（source maps）](http://www.html5rocks.com/en/tutorials/developertools/sourcemaps/) .
+
+代码生成其实很简单：深度优先遍历整个 AST，然后构建可以表示转换后代码的字符串。
+
+
+
+### 遍历 
+
+想要转换 AST 你需要进行递归的 [树形遍历](https://en.wikipedia.org/wiki/Tree_traversal) .
+
+比方说 我们有一个 `FunctionDeclaration` 类型. 他有几个属性 : `id` `params` `body` 每一个都有一些内嵌节点.
+
+```js
+{
+  type: "FunctionDeclaration",
+  id: {
+    type: "Identifier",
+    name: "square"
+  },
+  params: [{
+    type: "Identifier",
+    name: "n"
+  }],
+  body: {
+    type: "BlockStatement",
+    body: [{
+      type: "ReturnStatement",
+      argument: {
+        type: "BinaryExpression",
+        operator: "*",
+        left: {
+          type: "Identifier",
+          name: "n"
+        },
+        right: {
+          type: "Identifier",
+          name: "n"
+        }
+      }
+    }]
+  }
+}
+```
+
+于是我们从 `FunctionDeclaration` 开始并且我们知道它的内部属性（即：`id`，`params`，`body`），所以我们依次访问每一个属性及它们的子节点。
+
+接着我们来到 `id`，它是一个 `Identifier`。`Identifier` 没有任何子节点属性，所以我们继续。
+
+之后是 `params`，由于它是一个数组节点所以我们访问其中的每一个，它们都是 `Identifier` 类型的单一节点，然后我们继续。
+
+此时我们来到了 `body`，这是一个 `BlockStatement` 并且也有一个 `body`节点，而且也是一个数组节点，我们继续访问其中的每一个。
+
+这里唯一的一个属性是 `ReturnStatement` 节点，它有一个 `argument`，我们访问 `argument` 就找到了 `BinaryExpression`。.
+
+`BinaryExpression` 有一个 `operator`，一个 `left`，和一个 `right`。 Operator 不是一个节点，它只是一个值因此我们不用继续向内遍历，我们只需要访问 `left` 和 `right`。.
+
+Babel 的转换步骤全都是这样的遍历过程。
+
+#### Vistors (访问者)
+
+当我们谈及 "进入" 一个节点,实际上是说我们在 **访问** 他们,之所以使用这样的术语 是因为有一个 [**访问者模式（visitor）**](https://en.wikipedia.org/wiki/Visitor_pattern) 的概念.
+
+访问者是一个用于 AST 遍历的跨语言的模式. 简单地说他们就是一个对象, 定义了用于在一个树状结构中获取具体节点的方法.说起来有点抽象 我们来举个例子.
+
+```js
+const MyVisitor = {
+    Indentfier() {
+        console.log("Called");
+    }
+}
+
+// 你也可以先创建一个访问者对象,并在稍后给它添加方法
+let visitor = {};
+visitor.MemberExpression = function () {};
+vistior.FunctionDeclaration = function () {};
+```
+
+> **注意:**  `Indentfier () {...} `  是 `Indentfier: { enter() {...} }` 的简写形式.
+
+这是一个简单的访问者, 把它用于遍历中时,每当在树中遇见一个 `Indentfier` 的时候会调用 `Indentfier` 方法.
+
+所以在下面的代码中 `Indentfier()` 方法会被调用四次 (包括 `square` 在内, 总共有 四个 `Indentfier` ).
+
+```js
+function square (n) {
+    return n * n;
+}
+```
+
+```js
+path.traverse(MyVisitor);
+
+// todo: 这边执行有问题.
+Called!
+Called!
+Called!
+Called!
+```
+
+这些调用都发生在**进入**节点时，不过有时候我们也可以在**退出**时调用访问者方法。
+
+假设我们有一个树状结构:
+
+```js
+- FunctionDeclaration
+  - Identifier (id)
+  - Identifier (params[0])
+  - BlockStatement (body)
+    - ReturnStatement (body)
+      - BinaryExpression (argument)
+        - Identifier (left)
+        - Identifier (right)
+```
+
+当我们向下遍历这颗树的每一个分支时我们最终会走到尽头，于是我们需要往上遍历回去从而获取到下一个节点。 向下遍历这棵树我们**进入**每个节点，向上遍历回去时我们**退出**每个节点。
+
++ 进入 `FunctionDeclaration`
+  + 进入`Identifier(id)`
+  + 走到尽头
+  + 退出 `Identifier(id)`
+  + 进入 `Identifier(params[0])`
+  + 走到尽头
+  + 退出 `Identifier(params[0])` 
+  + 进入 `BlockStatement(body)`
+  + 进入 `ReturnStatement(body)`
+    + 进入 `BinaryExpression(argument)`
+    + 进入 `Identifier (left)`
+      + 走到尽头
+    + 退出 `Identifier(left)`
+    + 进入`Identfier(right)`
+      + 走到尽头
+    + 退出 `Identfier(right)`
+    + 退出 `BinaryExpression(argument)`
+  + 退出`ReturnStatement(body)`
+  + 退出 `BlockStatement(bodt)`
++ 退出 `FunctionDeclaration`
+
+所以当创建访问者时候 实际上游两次机会来访问一个节点.
+
+```js
+const MyVisitor = {
+    Identifier: {
+        enter () {
+            console.log("Entered!");
+        },
+        exit () {
+            console.log("Exited!");
+        }
+    }
+}
+```
+
+如果有必要, 你还可以把方法名 用 `|` 分隔符分割成 `Identifier | MemberExpressoin` 形式的字符串, 把同一个函数应用到多种访问节点.
+
+例如，
+
+`Function` is an alias for `FunctionDeclaration`, `FunctionExpression`, `ArrowFunctionExpression`, `ObjectMethod` and `ClassMethod`.
+
+```js
+const MyVisitor = {
+  Function(path) {}
+};
+```
+
+#### Paths (路径)
+
+AST 通常会有许多节点,那么节点直接如何相互关联呢? 我们可以使用一个可操作和访问的巨大可变对象表示节点之间的关联关系,或者也可以用**Paths(路径)** 来简化这件事情.
+
+**Path** 是表示两个节点之间连接的对象.
+
+例如,如果我们有下面这样一个节点及其子节点:
+
+```js
+{
+    type: "FunctionDeclaration",
+    id: {
+        type: "Identifier",
+        name: "squera"
+    },
+    ...
+}
+```
+
+将子节点 `Identifier` 表示为一个路径的话 看起来是这样的
+
+```js
+{
+    "parent": {
+        "type": "FunctionDeclaration",
+        "id": {...},
+        ...
+    },
+    "node": {
+        "type": "Identifier",
+        "name": "square"
+    }
+}
+```
+
+同时它还包含关于该路径的其他元数据:
+
+```js
+{
+    "parent": {...},
+    "node": {...},
+    "hub": {...},
+	"contexts": [],
+	"data": {},
+    "shouldSkip": false,
+	"shouldStop": false,
+	"removed": false,
+	"state": null,
+	"opts": null,
+    "skipKeys": null,
+    "parentPath": null,
+    "context": null,
+    "container": null,
+    "listKey": null,
+    "inList": false,
+    "parentKey": null,
+    "key": null,
+    "scope": null,
+    "type": null,
+    "typeAnnotation": null        
+}
+```
+
+当然路径对象还包含添加、更新、移动和删除节点有关的其他很多方法，稍后我们再来看这些方法。
+
+在某种意义上,路径是一个节点树中的位置以及关于该节点各种信息的响应式 **Reactive** 表示。 当你调用一个修改树的方法后，路径信息也会被更新。 Babel 帮你管理这一切，从而使得节点操作简单，尽可能做到无状态。
+
+#### Paths in Visitors（存在于访问者中的路径）
+
+当你有一个 `Identifier()` 成员方法的访问者时，你实际上是在访问路径而非节点。 通过这种方式，你操作的就是节点的响应式表示（译注：即路径）而非节点本身。
+
+```js
+const MyVisitor = {
+  Identifier(path) {
+    console.log("Visiting: " + path.node.name);
+  }
+};
+```
+
+```js
+a + b + c;
+```
+
+```js
+path.traverse(MyVisitor);
+
+Visiting: a
+Visiting: b
+Visiting: c
+```
+
+#### State (状态)
+
+状态是抽象语法树AST转换的敌人,状态管理会不断牵扯你的经历,而且几乎所有你对状态的假设,总是会有一些未考虑到的语法 最中证明你的假设是错误的.
+
+考虑下列代码:
+
+```js
+function square (n) {
+    return n * n;
+}
+```
+
+让我们写一个把 `n` 重命名 为 `x` 的访问者的快速实现
+
+```js
+let paramName;
+
+const MyVisitor = {
+   FunctionDeclaration(path) {
+    const param = path.node.params[0];
+    paramName = param.name;
+    param.name = "x";
+  },
+
+  Identifier(path) {
+    if (path.node.name === paramName) {
+      path.node.name = "x";
+    }
+  } 
+};
+
+```
+
+对上面的例子代码这段访问者代码也许能工作，但它很容易被打破：
+
+```js
+function square(n) {
+  return n * n;
+}
+n;
+```
+
+更好的处理方式是使用递归，下面让我们来像克里斯托佛·诺兰的电影盗梦空间那样来把一个访问者放进另外一个访问者里面。
+
+```js
+const updateParamNameVisitor = {
+  Identifier(path) {
+    if (path.node.name === this.paramName) {
+      path.node.name = "x";
+    }
+  }
+};
+
+const MyVisitor = {
+  FunctionDeclaration(path) {
+    const param = path.node.params[0];
+    const paramName = param.name;
+    param.name = "x";
+
+    path.traverse(updateParamNameVisitor, { paramName });
+  }
+};
+
+path.traverse(MyVisitor);
+```
+
+当然，这只是一个刻意编写的例子，不过它演示了如何从访问者中消除全局状态。
+
+#### Scopes (作用域)
+
+接下来让我们介绍[**作用域（scope）**](https://en.wikipedia.org/wiki/Scope_(computer_science))的概念。 JavaScript 支持[词法作用域](https://en.wikipedia.org/wiki/Scope_(computer_science)#Lexical_scoping_vs._dynamic_scoping)，在树状嵌套结构中代码块创建出新的作用域。
+
+```js
+// global scope
+function scopeOne () {
+    // scope 1
+    function scopeTwo () {
+        // scope 2
+    }
+}
+```
+
+在 JavaScript 中, 每当你创建了一个引用,不管是通过变量 (variable), 函数(function), 类型 (class), 参数 (params), 模块导入(import) 还是标签 (label)等, 它都属于当前作用域.
+
+```js
+var global = "I am in the global scope";
+
+function scopeOne () {
+    var one = "I am in the scope created by `scopeOne()`";
+    
+    function scopeTwo () {
+        var two = "I am in the scope created by `scopeTwo()`"
+    }
+}
+```
+
+更深的内部作用域代码可以使用外层作用域中的引用.
+
+```js
+function scopeOne () {
+    var one  = "I am in the scope created by `scopeOne()`";
+    
+    function scopeTwo () {
+        one  = "I am updating the reference in `scopeOne` inside `scopeTwo`";
+    }
+}
+```
+
+内层作用域也可以创建和外层作用域同名的引用.
+
+```js
+function scopeOne () {
+    var one  = "I am in the scope created by `scopeOne()`";
+    
+    function scopeTwo () {
+     	var one  = "I am creating a new `one` but leaving reference in `scopeOne()` alone";
+    }
+}
+```
+
+当编写一个转换时, 必须小心作用域. 我们得确保在改变代码的各个部分时不会破坏已经存在的代码.
+
+我们在添加一个新的引用时需要确保新增加引用名字和已有的所有引用不冲突. 或者我们仅仅想找出使用一个变量的所有引用,我们只想在给定的作用域(scope)中找出这些引用.
+
+作用域可以被表示为如下形式:
+
+```js
+{
+	path: path,
+    block: path.node,
+	parentBlock: path.parent,
+	parent: parentScope,
+	bindings: [...]
+}
+```
+
+当你创建一个新的作用域时,需要给出它的路径和父作用域,之后在遍历过程中他会在该作用域内收集所有的引用("绑定").
+
+一旦引用收集完毕,你就可以在作用域(scope)上使用各种方法,稍后我们会了解这些方法.
+
+##### Bingings (绑定)
+
+所有引用属于特定的作用域,引用和作用域的这种关系被称作: **绑定(binding)**
+
+```js
+function scopeOne () {
+    var ref = "This is a binging";
+    
+    ref; // This is a reference to a binding
+    
+    function scopeTwo () {
+        ref; // This is a reference to a binging from a lower scope
+    }
+}
+```
+
+单个绑定看起来像这样:
+
+```js
+Text for Translation
+{
+  identifier: node,
+  scope: scope,
+  path: path,
+  kind: 'var',
+
+  referenced: true,
+  references: 3,
+  referencePaths: [path, path, path],
+
+  constant: false,
+  constantViolations: [path]
+}
+```
+
+有了这些信息你就可以查找一个绑定的所有引用，并且知道这是什么类型的绑定(参数，定义等等)，查找它所属的作用域，或者拷贝它的标识符。 你甚至可以知道它是不是常量，如果不是，那么是哪个路径修改了它。
+
+在很多情况下，知道一个绑定是否是常量非常有用，最有用的一种情形就是代码压缩时。
+
+```js
+function scopeOne() {
+  var ref1 = "This is a constant binding";
+
+  becauseNothingEverChangesTheValueOf(ref1);
+
+  function scopeTwo() {
+    var ref2 = "This is *not* a constant binding";
+    ref2 = "Because this changes the value";
+  }
+}
+```
+
+
+
+### API
+
+Babel 实际上是一组模块的集合.本节我们将探索一些主要的模块,解释他们是做什么的以及如何使用它们.
+
+> 注意: 本节内容不是详细的API文档的替代品
+
+#### [babylon](https://github.com/babel/babylon)
+
+babylon 是 Babel 的解析器. 最初是从Acorn项目fork出来的. Acorn非常快, 易于使用,并且针对非标准特性(以及那些未来的标准特性) 设计了一个基于插件的架构.
+
+首先 安装
+
+```js
+$  npm install --save babylon
+```
+
+先从解析一个代码字符转开始:
+
+```js
+const babylon = require("babylon");
+
+const code = `function square (n) {
+	return n * n;
+}`;
+
+console.log(babylon.parse(code));
+
+/*
+Node {
+	type: "File",
+	start: 0,
+	end: 38,
+	loc: SourceLocation {...},
+	program: Node {...},
+	comments: [],
+	tokens: [...]
+}
+*/
+```
+
+我们还能像下面这样传递选项给 `parse()` 方法:
+
+```js
+babylon.parse(code, {
+    sourceType: "module", // default: "script"
+    plugins: ["jsx"], // default: []
+})
+```
+
+`sourceType` 可以是 `module` 或者 `script` ,它表示 Babylon 应该用哪种模式来解析. `module` 将会在严格模式下解析并且允许模块自定义, `script` 则不会.
+
+> **注意:** `sourceType` 的默认值是 `script` ,并且在发现 `import` 或 `export` 时产生错误. 使用 `scorceType: "module"` 来避免这些错误.
+
+由于 Babylon 使用了基于插件的架构，因此有一个 `plugins` 选项可以开关内置的插件。 注意 Babylon 尚未对外部插件开放此 API 接口，不排除未来会开放此API。
+
+要查看完整的插件列表，请参见 [Babylon README](https://github.com/babel/babylon/blob/master/README.md#plugins)文件。
+
+#### [babel-traverse](https://github.com/babel/babel/tree/master/packages/babel-traverse) 
+
+Babel Traverse (遍历) 模块维护了整棵树的状态, 并且负责替换,移除,和添加节点.
+
+首先我们安装一下
+
+```js
+$ npm install --save babel-traverse
+```
+
+我们可以和babylon 一起使用来遍历和更新节点;
+
+```js
+const babylon = require('babylon');
+const traverse = require('babel-traverse');
+
+const code = `function suqare (n) {
+  return n * n;
+}`;
+
+const ast = babylon.parse(code);
+
+
+traverse.default(ast, {
+  enter (path) {
+    if (
+      path.node.type === "Identifier" &&
+      path.node.name === "n"
+    ) {
+      path.node.name = "x";
+    }
+  }
+})
+
+console.log(ast.program.body[0].body.body[0].argument.left)
+
+/*
+Node {
+  type: 'Identifier',
+  start: 31,
+  end: 32,
+  loc: SourceLocation {
+    start: Position { line: 2, column: 9 },
+    end: Position { line: 2, column: 10 },
+    identifierName: 'n'
+  },
+  name: 'x'
+}
+*/
+```
+
+#### [babel-types](https://github.com/babel/babel/tree/master/packages/babel-types) 
+
+Babel Types模块是一个用于 AST 节点的 Lodash 式工具库（译注：Lodash 是一个 JavaScript 函数工具库，提供了基于函数式编程风格的众多工具函数）， 它包含了构造、验证以及变换 AST 节点的方法。 该工具库包含考虑周到的工具方法，对编写处理AST逻辑非常有用。
+
+可以运行以下命令来安装它：
+
+```js
+$ npm install --save babel-types
+```
+
+然后按照如下所示来使用:
+
+```js
+const babylon = require("babylon");
+const traverse = require("babel-traverse");
+const t = require("babel-types");
+
+const code = `function suqare (n) {
+  return n * n;
+}`;
+
+const ast = babylon.parse(code);
+
+
+traverse.default(ast, {
+  enter (path) {
+    if ( t.isIdentifier(path.node, {name: 'n'})) {
+      path.node.name = "x";
+    }
+  }
+})
+
+console.log(ast.program.body[0].body.body[0].argument.left)
+
+/*
+Node {
+  type: 'Identifier',
+  start: 31,
+  end: 32,
+  loc: SourceLocation {
+    start: Position { line: 2, column: 9 },
+    end: Position { line: 2, column: 10 },
+    identifierName: 'n'
+  },
+  name: 'x'
+}
+*/
+```
+
+##### Definitions(定义)
+
+Babel Types 模块拥有每一个单一类型节点的定义,包括节点包含哪些属性,什么是合法值,如何构建节点,遍历节点,以及节点的别名等信息.
+
+单一节点类型的定义形式如下:
+
+```js
+defineType("BinaryExpression", {
+  builder: ["operator", "left", "right"],
+  fields: {
+    operator: {
+      validate: assertValueType("string")
+    },
+    left: {
+      validate: assertNodeType("Expression")
+    },
+    right: {
+      validate: assertNodeType("Expression")
+    }
+  },
+  visitor: ["left", "right"],
+  aliases: ["Binary", "Expression"]
+});
+```
+
+##### Builders (构建器)
+
+你会注意到 上面 `BinaryExpression` 定义有一个 `builder` 字段.
+
+```js
+builder: ["operator", "left", "right"]
+```
+
+这是由于每一个节点类型都有构造器方法 builder, 按类似下面的方式使用:
+
+```js
+t.binaryExpression("*", t.identifier("a"), t.identifier(b));
+```
+
+可以创建如下所示的AST:
+
+```js
+{
+    type: "BinaryExpression",
+    operator: "*",
+    left: {
+        type: "Identifier",
+        name: "a"
+    },
+    right: {
+        type: "Identifier",
+        name: "b"
+    }
+}
+```
+
+当打印出来之后是这样的
+
+```js
+a * b
+```
+
+构造器还会验证自身创建的节点，并在错误使用的情形下会抛出描述性错误，这就引出了下一个方法类型。
+
+##### Validators (验证器)
+
+`BinaryExpression` 的定义还包含了节点的字段 `fields` 信息，以及如何验证这些字段。
+
+```js
+fields: {
+  operator: {
+    validate: assertValueType("string")
+  },
+  left: {
+    validate: assertNodeType("Expression")
+  },
+  right: {
+    validate: assertNodeType("Expression")
+```
+
+可以创建两种验证方法. 第一种是 `isX`.
+
+```js
+t.isBinaryExpression(maybeBinaryExpressionNode);
+```
+
+这个测试用来确保节点是一个二进制表达式,另外你也可以传入第二个参数来确保节点包含特定的属性和值:
+
+```js
+t.isBinaryExpression(maybeBinaryExpressionNode, { operator: "*" });
+```
+
+这些方法还有一种断言式的版本，会抛出异常而不是返回 `true` 或 `false`。.
+
+```js
+t.assertBinaryExpression(maybeBinaryExpressionNode);
+t.assertBinaryExpression(maybeBinaryExpressionNode, { operator: "*" });
+// Error: Expected type "BinaryExpression" with option { "operator": "*" }
+```
+
+
 
 
 
