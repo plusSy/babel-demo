@@ -917,9 +917,90 @@ t.assertBinaryExpression(maybeBinaryExpressionNode, { operator: "*" });
 // Error: Expected type "BinaryExpression" with option { "operator": "*" }
 ```
 
+##### Converters（变换器）
+
+> [WIP]
+
+#### [babel-generator](https://github.com/babel/babel/tree/master/packages/babel-generator) 
+
+Babel Generator模块是 Babel 的代码生成器，它读取AST并将其转换为代码和源码映射（sourcemaps）
+
+运行以下命令来安装:
+
+```js
+$ npm install --save babel-generator
+```
+
+然后按照以下方式使用
+
+```js
+const babylon = require("babylon");
+const generate = require("babel-generator");
+
+const code = `function square (n) {
+  return n * n;
+}`;
+
+const ast = babylon.parse(code);
 
 
+const result = generate.default(ast, {}, code)
 
+console.log(result)
+```
+
+你也可以给 `generate()`  方法传递选项.
+
+```js
+generate.default(ast, {
+  retainLines: false,
+  compact: "auto",
+  concise: false,
+  quotes: "double"
+}, code)
+```
+
+#### [babel-template](https://github.com/babel/babel/tree/master/packages/babel-template) 
+
+babel-template 是另一个虽然很小但却非常有用的模块。 它能让你编写字符串形式且带有占位符的代码来代替手动编码， 尤其是生成的大规模 AST的时候。 在计算机科学中，这种能力被称为准引用（quasiquotes）。
+
+```js
+$ npm install --save babel-template
+```
+
+```js
+const template = require("babel-template");
+const generate = require("babel-generator");
+const t = require("babel-types");
+
+const buildRequire = template(`
+  var IMPORT_NAME = require(SOURCE)
+`);
+
+const ast = buildRequire({
+  IMPORT_NAME: t.identifier("myModule"),
+  SOURCE: t.stringLiteral("my-module")
+})
+
+
+let result = generate.default(ast).code;
+
+console.log(result)
+
+// => var myModule = require("my-module");
+```
+
+### 编写你的第一个Babel插件
+
+现在你已经熟悉Babel的所有基础知识了,让我们把这些知识和插件的API融合在一起来编写第一个Babel插件吧.
+
+先从一个接受了当前 `babel` 对象作为参数的 function 的开始
+
+```js
+export default function (babel) {
+    // plugin contents
+}
+```
 
 
 

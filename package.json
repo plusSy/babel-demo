@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "plg": "node packages/plugins/babel-plugin-use/babel-types.js",
+    "plg": "node packages/plugins/babel-plugin-use/babel-template.js",
     "core": "babel-node ./babel-core.js",
     "build": "babel src -d lib",
     "lint": "eslint index.js",
@@ -25,7 +25,9 @@
     "eslint": "^7.4.0"
   },
   "dependencies": {
+    "babel-generator": "^6.26.1",
     "babel-polyfill": "^6.26.0",
+    "babel-template": "^6.26.0",
     "babel-traverse": "^6.26.0",
     "babel-types": "^6.26.0",
     "babylon": "^6.18.0"
