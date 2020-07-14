@@ -4,8 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "plg": "node packages/plugins/babel-plugin-use/babel-template.js",
+    "plg": "node packages/plugins/babel-plugin-a/index.js",
     "core": "babel-node ./babel-core.js",
+    "index": "babel-node ./index.js",
     "build": "babel src -d lib",
     "lint": "eslint index.js",
     "test": "echo \"Error: no test specified\" && exit 1"

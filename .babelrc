@@ -4,7 +4,12 @@
   ],
   "plugins": [
     "transform-runtime",
-    "transform-es2015-classes"
+    "transform-es2015-classes",
+    ["a", {
+      "options1":  true,
+      "options2":  true
+    }],
+    "b"
   ],
   "env": {
     "development": {

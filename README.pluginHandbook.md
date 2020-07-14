@@ -1002,21 +1002,738 @@ export default function (babel) {
 }
 ```
 
+由于你将会经常这样使用,所以直接取出 `babel.type` 比较方便: (译注：这是 ES2015 语法中的对象解构，即 Destructuring)
+
+```js
+export default function ({type: t}) {
+    // plugin content
+}
+```
+
+接着返回一个对象,其`visitor` 属性就是这个插件的主要访问者
+
+```js
+export default function ({type: t}) {
+    return {
+        visitor: {
+            // visitor content
+        }
+    }
+}
+```
+
+visitor 中的每个函数接收两个参数 `path`  和 `state`
+
+```js
+export default function ({type: t}) {
+    return {
+        visitor: {
+            Identifier(path, state) {},
+            ASTNodeTypeHere(path, state) {},
+            ...
+        }
+    }
+}
+```
+
+我们来快速编写一个可用的插件来展示一下它是如何工作的. 下面使我们的源码:
+
+```js
+foo === bar
+```
+
+其AST形式如下:
+
+```js
+{
+  type: "BinaryExpression",
+  operator: "===",
+  left: {
+    type: "Identifier",
+    name: "foo"
+  },
+  right: {
+    type: "Identifier",
+    name: "bar"
+  }
+}
+```
+
+我们从添加`BinaryExpression` 访问者开始:
+
+```js
+export default function ({type: t}) {
+    return {
+        visitor: {
+            BinaryExpression (path) {
+              // ...  
+            }
+        }
+    }
+}
+```
+
+然后我们更确切一些,只关注哪些使用了  `===` 的 `BinaryExpression`
+
+```js
+visitor: {
+    BinaryExpression (path) {
+        if (path.node.operator !== "===") return;
+        
+        // ...
+    }
+}
+```
+
+现在我们用新的标识符来替换 `left` 属性
+
+```js
+BinaryExpression (path) {
+    if (path.node.operator !== "===") return;
+    
+    path.node.left = t.idetifier("sebmck");
+}
+```
+
+于是我们会得到
+
+```js
+sebmck === bar
+```
+
+现在只需替换`right` 属性了
+
+```js
+BinaryExpression (path) {
+    if (path.node.operator !== "===") return;
+    
+    path.node.left = t.identifier("sebmck");
+    path.node.right = t.identifier("dork");
+}
+```
+
+这就是我们最终的结果了
+
+```js
+sebmck === dork
+```
+
+这是我们的第一个插件.
+
+### 转换操作
+
+#### 访问
+
+##### 获取子节点的Path
+
+为了得到一个AST节点的属性值,我们一般先访问到该节点,然后利用 `path.node.property` 方法即可.
+
+```js
+// the BinaryExpression AST node has properties: `left`, `right`, `operator`
+BinaryExpression (path) {
+    path.node.left,
+    path.node.right,
+    path.node.operator
+}
+```
+
+如果你想访问到该属性内部的 `path` 使用 path 对象的 get 方法,传递该属性的字符串作为参数
+
+```js
+BinaryExpression (path) {
+    path.get('left');
+}
+
+Program (path) {
+    path.get('body.0');
+}
+```
+
+##### 检查节点的类型
+
+如果你想检查节点的类型,最好的方式是:
+
+```js
+BinaryExpression(path) {
+    if (t.isIdentifier(path.node.left)) {
+        // ...
+    }
+}
+```
+
+你同样可以对节点的属性们做浅层检查:
+
+```js
+BinaryExpression (path) {
+    if (t.isIdentifier(path.node.left, { name: "n" })) {
+        // ...
+    }
+}
+```
+
+功能上等阶于
+
+```js
+BinaryExpression (path) {
+    if (
+    	path.node.left !== null &&
+        path.node.left.type === 'Identidier' &&
+        path.node.left.name === 'n'
+    ) {
+        // ...
+    }
+}
+```
+
+##### 检查路径 (Path) 类型
+
+一个路径具有相同的方法检查节点的类型:
+
+```js
+BinaryExpression (path) {
+    if (path.get('left').isIdentifier({name: 'n'})) {
+        // ...
+    }
+}
+```
+
+就相当于:
+
+```js
+BinaryExpression (path) {
+    if (t.identifier(path.node.left, {name: 'n'})) {
+        // ...
+    }
+}
+```
+
+##### 检查标识符 (Identifier) 是否被引用
+
+```js
+Identifier (path) {
+    if (path.isReferencedIdentifier()) {
+        // ...
+    }
+}
+```
+
+或者:
+
+```js
+Identifier (path) {
+    if (t.isReferenced(path.node, path.parent)) {
+        // ...
+    }
+}
+```
+
+##### 找到特定的父路径
+
+有时候你需要从一个路径向上便利语法树,直到满足响应的条件.
+
+对于每一个父路径调用 `callback` 并将其 `NodePath` 当做参数, 当`callBack` 返回真值时, 则将其`NodePath` 返回.
+
+```js
+path.findParent((path) => path.isObjectExpression());
+```
+
+如果也需要遍历当前节点
+
+```js
+path.find((path) => path.isObjectExpression());
+```
+
+查找最接近的父函数或程序:
+
+```js
+path.getFunctionParent();
+```
+
+向上遍历语法树,直到找到在列表中的父节点路径
+
+```js
+path.getStatementParent();
+```
+
+##### 获取同级路径
+
+如果一个路径是一个 `Function` / `Program` 中的列表里面, 他就有同级节点.
+
++ 使用 `path.inList` 来判断路径是否有同级节点
++ 使用 `path.getSibling(index)` 来获取同级路径
++ 使用 `path.key` 获取路径所在容器的索引
++ 使用 `path.container` 获取容器的路径 (包含所有同级节点的数组)
++ 使用 `path.listKey` 获取容器的 key
+
+> 这些API用于 babel-minify 中使用的transform-merge-sibling-variables 插件
+
+```js
+var a = 1; // pathA, path.key = 0 
+var b = 2; // pathB, path.key = 1 
+var c = 3; // pathC, path.key = 2
+```
+
+```js
+export default function({ types: t }) {
+  return {
+    visitor: {
+      VariableDeclaration(path) {
+        // if the current path is pathA
+        path.inList // true
+        path.listKey // "body"
+        path.key // 0
+        path.getSibling(0) // pathA
+        path.getSibling(path.key + 1) // pathB
+        path.container // [pathA, pathB, pathC]
+      }
+    }
+  };
+}
+```
+
+##### 停止遍历
+
+如果你的插件需要在某种情况下不运行,最贱的做法是尽早写回
+
+```js
+BinaryExpression (path) {
+    if (path.node.operator !== "**") return;
+}
+```
+
+如果在顶级路径中进行子遍历
+
+`path.skip()` skips traversing the children of the current path. `path.stop()` stops traversal entirely.
+
+```js
+outerPath.traverse({
+  Function(innerPath) {
+    innerPath.skip(); // if checking the children is irrelevant
+  },
+  ReferencedIdentifier(innerPath, state) {
+    state.iife = true;
+    innerPath.stop(); // if you want to save some state and then stop traversal, or deopt
+  }
+});
+```
+
+#### 处理
+
+##### 替换一个节点
+
+```js
+BinaryExpression (path) {
+    path.replaceWith(
+    	t.binaryExpression('**', path.node.left, t.numberLiteral(2))
+    );
+}
+```
+
+```js
+function square (n) {
+    // return n * n;
+    return n ** 2;
+}
+```
+
+##### 用多节点替换单节点
+
+```js
+ReturnStatement (path) {
+    path.replaceWithMultiple([
+        t.expressionStatement(t.stringLiteral("Is this the real life?"));
+        t.expressionStatement(t.stringLiteral("Is this just fantasy?"));
+    	t.expressionStatement(t.stringLiteral("(Enjoy string the rest of the song in your head)"))
+    ]);
+}
+```
+
+```diff
+function square (n) {
+-    return n * n;
++   "Is this the real life?"
++   "Is this just fantasy?"
++   "(Enjoy string the rest of the song in your head)"
+}
+```
+
+>  **注意：** 当用多个节点替换一个表达式时，它们必须是  声明。 这是因为Babel在更换节点时广泛使用启发式算法，这意味着您可以做一些非常疯狂的转换，否则将会非常冗长。
+
+##### 用字符串源码替换节点
+
+```js
+FunctionDeclaration(path) { 
+    path.replaceWithSourceString(function add(a, b) { return a + b; }); 
+}
+```
+
+```diff
+- function square(n) {
+-   return n * n;
++ function add(a, b) {
++   return a + b;
+  }
+```
+
+>  **注意：** 不建议使用这个API，除非您正在处理动态的源码字符串，否则在访问者外部解析代码更有效率。
+
+##### 插入兄弟节点
+
+```js
+FunctionDeclaration(path) {
+    path.insertBefore(
+        t.expressionStatement(
+            t.stringLiteral("Because I'm easy come, easy go.")
+        )
+    );
+    path.insertAfter(
+        t.expressionStatement(
+            t.stringLiteral("A little high, little low.")
+        )
+    );
+}
+```
+
+```diff
++	"Because I'm easy come, easy go."
+	function squera (n) {
+		return n * n;
+	}
++	"A little high, little low."
+```
+
+##### 插入到容器中
+
+如果您想要在AST节点属性中插入一个像`body `那样的数组。 它与 `insertBefore`/`insertAfter` 类似, 但您必须指定 `listKey` (通常是 `正文`).
+
+```js
+ClassMethod(path) { 
+    path.get('body').unshiftContainer(
+        'body', 
+        t.expressionStatement(
+            t.stringLiteral('before')
+        )
+    );
+    path.get('body').pushContainer(
+        'body', 
+        t.expressionStatement(
+            t.stringLiteral('after')
+        )
+    );
+}
+```
+
+```diff
+ class A {
+  constructor() {
++   "before"
+    var a = 'middle';
++   "after"
+  }
+ }
+```
+
+##### 删除一个节点
+
+```js
+FunctionDeclaration (path) {
+    path.remove();
+}
+```
+
+```diff
+- function square (n) {
+- 	return n * n;
+- }
+```
+
+##### 替换父节点
+
+只需使用 `parentPath: path.parentPath` 调用`replaceWith` 即可.
+
+```js
+BinaryExpression (path) {
+    path.parentPath.replaceWith(
+    	t.expressionStatement(
+        	t.stringLiteral("Anyway the wind blows, doesn't really matter to me, to me.")
+        )
+    )
+}
+```
+
+```diff
+	function square (n) {
+-		return n * n;
++ 		"Anyway the wind blows, doesn't really matter to me, to me."
+	}
+```
+
+##### 删除父节点
+
+```js
+BinaryExpression (path) {
+    path.parentPath.remove();
+}
+```
+
+```diff
+	function square (n) {
+-		return n * n;	
+	}
+```
+
+#### Scope 作用域
+
+##### 检查本地变量是否被绑定
+
+```js
+FunctionDeclaration (path) {
+    if (path.scope.hasBinding("n")) {
+        // ...
+    }
+}
+```
+
+这将遍历范围树并检查特定的绑定.
+
+你也可以检查一个作用域是否有 **自己的**  绑定.
+
+```js
+FunctionDeclaration (path) {
+    if (path.scope.hasOwnBinding("n")) {
+        // ...
+    }
+}
+```
+
+##### 创建一个UID
+
+这将生成一个标识符, 不会与任何本地定义的变量相冲突.
+
+```js
+FunctionDeclaration (path) {
+   path.scope.genrateUidIdentifier("Uid");
+   // Node {type: "Identifier", name: "_uid"}
+   path.scope.genrateUidIdentifier("Uid");
+   // Node{type: "Identifier", name: "_uid2"}
+}
+```
+
+##### 提升变量声明至父级作用域
+
+有时你可能想要推送一个 `VariableDeclaration`  这样你就可以分配给它.
+
+```js
+FunctionDeclaration(path) {
+  const id = path.scope.generateUidIdentifierBasedOnNode(path.node.id);
+  path.remove();
+  path.scope.parent.push({ id, init: path.node });
+}
+```
+
+```diff
+- function square(n) {
++ var _square = function square(n) {
+    return n * n;
+- }
++ };
+```
+
+##### 重命名绑定及其引用
+
+```js
+FunctionDeclaration(path) {
+  path.scope.rename("n", "x");
+}
+```
+
+```diff
+- function square(n) {
+-   return n * n;
++ function square(x) {
++   return x * x;
+  }
+```
+
+或者，您可以将绑定重命名为生成的唯一标识符：
+
+```js
+FunctionDeclaration(path) {
+  path.scope.rename("n");
+}
+```
+
+```diff
+- function square(n) {
+-   return n * n;
++ function square(_n) {
++   return _n * _n;
+  }
+```
+
+### 插件选项
+
+如果你想让你的用户自定义你的Babel 插件的行为, 你可以接受用户可以指定的插件特定选项, 如下所示:
+
+```js
+{
+    plugins: [
+        ["my-plugin", {
+            "option1": true,
+            "option2": false
+        }]
+    ]
+}
+```
+
+这些选项会通过`状态` 对象传递给插件访问者:
+
+```js
+export default function ({types: t}) {
+    return {
+        visitor: {
+            FunctionDeclaration (path, state) {
+             	console.log(state.opts)   
+            }
+        }
+    }
+}
+```
+
+> 这些选项是特定于插件的,你不能访问其他插件中的选项
+
+#### 插件的准备和收尾工作
+
+插件可以具有在插件之前或之后运行的函数。它们可以用于设置或清理/分析目的。
+
+```js
+export default function({ types: t }) {
+  return {
+    pre(state) {
+      this.cache = new Map();
+    },
+    visitor: {
+      StringLiteral(path) {
+        this.cache.set(path.node.value, 1);
+      }
+    },
+    post(state) {
+      console.log(this.cache);
+    }
+  };
+}
+```
+
+#### 在插件中启用其他语法
+
+插件可以启用`babylon plugins`，以便用户不需要安装/启用它们。 这可以防止解析错误，而不会继承语法插件。
+
+```js
+export default function({ types: t }) {
+  return {
+    inherits: require("babel-plugin-syntax-jsx")
+  };
+}
+```
+
+#### 抛出一个错误
+
+如果您想用`babel-code-frame`和一个消息抛出一个错误：
+
+```js
+export default function({ types: t }) {
+  return {
+    visitor: {
+      StringLiteral(path) {
+        throw path.buildCodeFrameError("Error message here");
+      }
+    }
+  };
+}
+```
+
+
+
+### 构建节点
+
+编写转换时，通常需要构建一些要插入的节点进入AST。 如前所述，您可以使用` babel-types `包中的[builder 方法。](https://github.com/jamiebuilds/babel-handbook/blob/master/translations/zh-Hans/plugin-handbook.md#builders)
+
+[构建器的方法名称就是您想要的节点类型的名称，除了第一个字母小写。 例如，如果您想建立一个` MemberExpression` 您可以使用` t.memberExpression（...）.`](https://github.com/jamiebuilds/babel-handbook/blob/master/translations/zh-Hans/plugin-handbook.md#builders) 这些构建器的参数由节点定义决定。 有一些正在做的工作，以生成易于阅读的文件定义，但现在他们都可以在此处找到。
+
+节点定义如下所示：
+
+```js
+defineType("MemberExpression", {
+  builder: ["object", "property", "computed"],
+  visitor: ["object", "property"],
+  aliases: ["Expression", "LVal"],
+  fields: {
+    object: {
+      validate: assertNodeType("Expression")
+    },
+    property: {
+      validate(node, key, val) {
+        let expectedType = node.computed ? "Expression" : "Identifier";
+        assertNodeType(expectedType)(node, key, val);
+      }
+    },
+    computed: {
+      default: false
+    }
+  }
+});
+```
+
+> 在这里你可以看到关于这个特定节点类型的所有信息，包括如何构建它，遍历它，并验证它。
+
+通过查看 `生成器` 属性, 可以看到调用生成器方法所需的3个参数 (`t. 情况`).
+
+```js
+生成器: ["object", "property", "computed"],
+```
+
+>  请注意，有时在节点上可以定制的属性比`构建器`数组包含的属性更多。 这是为了防止生成器有太多的参数。 在这些情况下，您需要手动设置属性。 一个例子是 `ClassMethod `.
+
+```js
+// Example
+// because the builder doesn't contain `async` as a property
+var node = t.classMethod(
+  "constructor",
+  t.identifier("constructor"),
+  params,
+  body
+)
+// set it manually after creation
+node.async = true;
+```
+
+### 最佳实践
+
+#### 尽量避免遍历抽象语法树
+
+#### 及时合并访问者对象
+
+#### 可以手动查找就不要遍历
+
+#### 优化嵌套的访问者对象
+
+#### 留意嵌套结构
+
+#### 单元测试
+
+##### 快照测试
+
+##### AST 测试
+
+##### Exec Tests
 
 
 
 
 
+# 友情链接
 
-
-
-
-
-
-
-
-
-
+[https://github.com/jamiebuilds/babel-handbook/blob/master/translations/zh-Hans/plugin-handbook.md](https://github.com/jamiebuilds/babel-handbook/blob/master/translations/zh-Hans/plugin-handbook.md)
 
 
 
